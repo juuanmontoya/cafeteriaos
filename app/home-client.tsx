@@ -9,7 +9,7 @@ type Category = {
   icon: string | null;
 };
 
-export default function Home() {
+export default function HomeClient() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
