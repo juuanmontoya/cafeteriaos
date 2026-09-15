@@ -18,26 +18,44 @@ type CartItem = {
   quantity: number;
 };
 
+type Member = {
+  id: string;
+  name: string;
+  phone: string | null;
+  active: boolean;
+};
+
+type PaymentMode = "cash" | "nequi" | "account";
+
 export default function VentasPage() {
   const supabase = createClient();
 
   const searchRef = useRef<HTMLInputElement>(null);
+  const memberSearchRef = useRef<HTMLInputElement>(null);
 
-  // Buffer utilizado para detectar códigos enviados rápidamente por el escáner.
+  // Scanner
   const scannerBufferRef = useRef("");
   const scannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastKeyTimeRef = useRef(0);
 
   const [products, setProducts] = useState<Product[]>([]);
+  const [members, setMembers] = useState<Member[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
 
   const [search, setSearch] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState<"cash" | "nequi">(
-    "cash"
-  );
+  const [memberSearch, setMemberSearch] = useState("");
+
+  const [paymentMode, setPaymentMode] =
+    useState<PaymentMode>("cash");
+
+  const [selectedMember, setSelectedMember] =
+    useState<Member | null>(null);
 
   const [loading, setLoading] = useState(true);
+  const [loadingMembers, setLoadingMembers] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [openingAccount, setOpeningAccount] = useState(false);
+
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -60,6 +78,25 @@ export default function VentasPage() {
 
     setProducts(data ?? []);
     setLoading(false);
+  }
+
+  async function loadMembers() {
+    setLoadingMembers(true);
+
+    const { data, error } = await supabase
+      .from("members")
+      .select("id, name, phone, active")
+      .eq("active", true)
+      .order("name");
+
+    if (error) {
+      setError(`Error cargando miembros: ${error.message}`);
+      setLoadingMembers(false);
+      return;
+    }
+
+    setMembers(data ?? []);
+    setLoadingMembers(false);
   }
 
   useEffect(() => {
@@ -103,6 +140,23 @@ export default function VentasPage() {
 
     return map;
   }, [products]);
+
+  const filteredMembers = useMemo(() => {
+    const query = memberSearch.trim().toLowerCase();
+
+    if (!query) {
+      return members.slice(0, 20);
+    }
+
+    return members
+      .filter((member) => {
+        return (
+          member.name.toLowerCase().includes(query) ||
+          (member.phone ?? "").toLowerCase().includes(query)
+        );
+      })
+      .slice(0, 20);
+  }, [members, memberSearch]);
 
   function focusScanner() {
     window.setTimeout(() => {
@@ -197,18 +251,6 @@ export default function VentasPage() {
     focusScanner();
   }
 
-  /*
-   * DETECTOR AUTOMÁTICO DEL ESCÁNER
-   *
-   * Un lector de códigos normalmente envía todas las teclas
-   * prácticamente de golpe.
-   *
-   * Si las teclas llegan con menos de 50 ms entre ellas,
-   * las consideramos parte de un escaneo.
-   *
-   * No necesitamos Enter.
-   */
-
   function handleScannerKeyDown(
     event: React.KeyboardEvent<HTMLInputElement>
   ) {
@@ -233,10 +275,6 @@ export default function VentasPage() {
 
     lastKeyTimeRef.current = now;
 
-    /*
-     * Si pasó demasiado tiempo desde la tecla anterior,
-     * probablemente estamos escribiendo manualmente.
-     */
     if (elapsed > 80) {
       scannerBufferRef.current = "";
     }
@@ -247,10 +285,6 @@ export default function VentasPage() {
       clearTimeout(scannerTimerRef.current);
     }
 
-    /*
-     * Esperamos apenas 60 ms para confirmar que terminó
-     * la ráfaga del escáner.
-     */
     scannerTimerRef.current = setTimeout(() => {
       const code = scannerBufferRef.current.trim();
 
@@ -258,13 +292,6 @@ export default function VentasPage() {
 
       scannerBufferRef.current = "";
 
-      /*
-       * Solo procesamos automáticamente códigos que tengan
-       * longitud razonable para un código de barras.
-       *
-       * Esto evita que una persona escribiendo "agua"
-       * provoque una venta automática.
-       */
       if (code.length >= 6) {
         const product = findProduct(code);
 
@@ -273,6 +300,43 @@ export default function VentasPage() {
         }
       }
     }, 60);
+  }
+
+  function handleManualSearchKeyDown(
+    event: React.KeyboardEvent<HTMLInputElement>
+  ) {
+    if (event.key !== "Enter") return;
+
+    event.preventDefault();
+
+    const value = search.trim();
+
+    if (!value) return;
+
+    const exactProduct = findProduct(value);
+
+    if (exactProduct) {
+      addToCart(exactProduct);
+      return;
+    }
+
+    const query = value.toLowerCase();
+
+    const filtered = products.filter((product) => {
+      return (
+        product.name.toLowerCase().includes(query) ||
+        (product.barcode ?? "").toLowerCase().includes(query)
+      );
+    });
+
+    if (filtered.length === 1) {
+      addToCart(filtered[0]);
+      return;
+    }
+
+    if (filtered.length === 0) {
+      setError(`No encontramos ningún producto para "${value}".`);
+    }
   }
 
   function updateQuantity(productId: string, quantity: number) {
@@ -324,44 +388,277 @@ export default function VentasPage() {
     setSearch("");
     scannerBufferRef.current = "";
 
+    setPaymentMode("cash");
+    setSelectedMember(null);
+    setMemberSearch("");
+
     focusScanner();
   }
 
-  function handleManualSearchKeyDown(
-    event: React.KeyboardEvent<HTMLInputElement>
-  ) {
-    if (event.key !== "Enter") return;
+  function selectCash() {
+    setPaymentMode("cash");
+    setSelectedMember(null);
+    setMemberSearch("");
+    setError("");
+    setMessage("");
+    focusScanner();
+  }
 
-    event.preventDefault();
+  function selectNequi() {
+    setPaymentMode("nequi");
+    setSelectedMember(null);
+    setMemberSearch("");
+    setError("");
+    setMessage("");
+    focusScanner();
+  }
 
-    const value = search.trim();
+  async function selectAccountMode() {
+    setPaymentMode("account");
+    setSelectedMember(null);
+    setMemberSearch("");
+    setError("");
+    setMessage("");
 
-    if (!value) return;
+    if (members.length === 0) {
+      await loadMembers();
+    }
 
-    const exactProduct = findProduct(value);
+    window.setTimeout(() => {
+      memberSearchRef.current?.focus();
+    }, 50);
+  }
 
-    if (exactProduct) {
-      addToCart(exactProduct);
+  function selectMember(member: Member) {
+    setSelectedMember(member);
+    setMemberSearch("");
+    setError("");
+    setMessage("");
+    focusScanner();
+  }
+
+  function cancelAccountMode() {
+    setPaymentMode("cash");
+    setSelectedMember(null);
+    setMemberSearch("");
+    setError("");
+    setMessage("");
+
+    focusScanner();
+  }
+
+  async function openAccountForMember(): Promise<string | null> {
+    if (!selectedMember) {
+      setError("Selecciona un miembro.");
+      return null;
+    }
+
+    setOpeningAccount(true);
+    setError("");
+
+    /*
+     * La fecha se utiliza únicamente para identificar
+     * cuándo se abrió la cuenta. Puede ser cualquier día.
+     */
+    const now = new Date();
+
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    const day = String(now.getDate()).padStart(2, "0");
+
+    const meetingDate = `${year}-${month}-${day}`;
+
+    const { data, error } = await supabase.rpc(
+      "open_member_account",
+      {
+        p_member_id: selectedMember.id,
+        p_meeting_date: meetingDate,
+        p_supervisor_override: false,
+      }
+    );
+
+    setOpeningAccount(false);
+
+    if (error) {
+      setError(error.message);
+      return null;
+    }
+
+    if (!data?.id) {
+      setError("No se pudo abrir la cuenta.");
+      return null;
+    }
+
+    return data.id;
+  }
+
+  async function findOrCreateAccount(): Promise<string | null> {
+    if (!selectedMember) {
+      setError("Selecciona un miembro.");
+      return null;
+    }
+
+    /*
+     * Primero buscamos una cuenta abierta.
+     *
+     * Si existe, usamos esa cuenta.
+     * Si no existe, abrimos una nueva.
+     *
+     * No importa si es lunes, martes, miércoles,
+     * jueves o viernes.
+     */
+    const { data: existingAccounts, error: accountError } =
+      await supabase
+        .from("accounts")
+        .select("id, meeting_date, status")
+        .eq("member_id", selectedMember.id)
+        .eq("status", "open")
+        .order("created_at", {
+          ascending: false,
+        })
+        .limit(1);
+
+    if (accountError) {
+      setError(
+        `No se pudo consultar la cuenta: ${accountError.message}`
+      );
+      return null;
+    }
+
+    const existingAccount = existingAccounts?.[0];
+
+    if (existingAccount) {
+      return existingAccount.id;
+    }
+
+    /*
+     * No tenía cuenta abierta:
+     * intentamos crear una nueva.
+     *
+     * La función de Supabase controla las reglas
+     * de máximo de jornadas pendientes y permisos.
+     */
+    return await openAccountForMember();
+  }
+
+  async function completeSale() {
+    setError("");
+    setMessage("");
+
+    if (cart.length === 0) {
+      setError("Agrega al menos un producto.");
+      focusScanner();
       return;
     }
 
-    const query = value.toLowerCase();
+    if (paymentMode === "account" && !selectedMember) {
+      setError("Selecciona un miembro para cobrar a cuenta.");
+      return;
+    }
 
-    const filtered = products.filter((product) => {
-      return (
-        product.name.toLowerCase().includes(query) ||
-        (product.barcode ?? "").toLowerCase().includes(query)
-      );
+    setSaving(true);
+
+    let accountId: string | null = null;
+
+    /*
+     * Solo buscamos/creamos cuenta cuando realmente
+     * estamos cobrando a cuenta.
+     */
+    if (paymentMode === "account") {
+      accountId = await findOrCreateAccount();
+
+      if (!accountId) {
+        setSaving(false);
+        focusScanner();
+        return;
+      }
+    }
+
+    const items = cart.map((item) => ({
+      product_id: item.product.id,
+      quantity: item.quantity,
+    }));
+
+    const { data, error } = await supabase.rpc("create_sale", {
+      p_items: items,
+      p_payment_method:
+        paymentMode === "account"
+          ? null
+          : paymentMode,
+      p_member_id:
+        paymentMode === "account"
+          ? selectedMember?.id ?? null
+          : null,
+      p_account_id: accountId,
     });
 
-    if (filtered.length === 1) {
-      addToCart(filtered[0]);
+    if (error) {
+      setError(
+        `No se pudo completar la venta: ${error.message}`
+      );
+      setSaving(false);
+      focusScanner();
       return;
     }
 
-    if (filtered.length === 0) {
-      setError(`No encontramos ningún producto para "${value}".`);
+    /*
+     * Actualizamos el stock local inmediatamente.
+     * No necesitamos volver a consultar todos los productos.
+     */
+    setProducts((currentProducts) =>
+      currentProducts.map((product) => {
+        const soldItem = cart.find(
+          (item) => item.product.id === product.id
+        );
+
+        if (!soldItem || !product.track_inventory) {
+          return product;
+        }
+
+        return {
+          ...product,
+          stock: Math.max(
+            0,
+            Number(product.stock) - soldItem.quantity
+          ),
+        };
+      })
+    );
+
+    const saleTotal = Number(data.total);
+    const saleNumber = data.sale_number;
+    const memberName = selectedMember?.name;
+
+    setCart([]);
+    setSearch("");
+    scannerBufferRef.current = "";
+
+    if (paymentMode === "account") {
+      setMessage(
+        `Venta #${saleNumber} agregada a la cuenta de ${memberName} por $${saleTotal.toLocaleString(
+          "es-CO"
+        )}.`
+      );
+    } else {
+      setMessage(
+        `Venta #${saleNumber} registrada por $${saleTotal.toLocaleString(
+          "es-CO"
+        )}.`
+      );
     }
+
+    /*
+     * Una venta nueva siempre empieza en pago normal.
+     * Así evitamos que accidentalmente la siguiente venta
+     * termine cargada al mismo miembro.
+     */
+    setPaymentMode("cash");
+    setSelectedMember(null);
+    setMemberSearch("");
+
+    setSaving(false);
+
+    focusScanner();
   }
 
   const filteredProducts = useMemo(() => {
@@ -384,80 +681,6 @@ export default function VentasPage() {
       0
     );
   }, [cart]);
-
-  async function completeSale() {
-    setError("");
-    setMessage("");
-
-    if (cart.length === 0) {
-      setError("Agrega al menos un producto.");
-      focusScanner();
-      return;
-    }
-
-    setSaving(true);
-
-    const items = cart.map((item) => ({
-      product_id: item.product.id,
-      quantity: item.quantity,
-    }));
-
-    const { data, error } = await supabase.rpc("create_sale", {
-      p_items: items,
-      p_payment_method: paymentMethod,
-      p_member_id: null,
-      p_account_id: null,
-    });
-
-    if (error) {
-      setError(`No se pudo completar la venta: ${error.message}`);
-      setSaving(false);
-      focusScanner();
-      return;
-    }
-
-    /*
-     * Actualizamos el stock local inmediatamente.
-     * No hacemos otra consulta antes de permitir
-     * la siguiente venta.
-     */
-
-    setProducts((currentProducts) =>
-      currentProducts.map((product) => {
-        const soldItem = cart.find(
-          (item) => item.product.id === product.id
-        );
-
-        if (!soldItem || !product.track_inventory) {
-          return product;
-        }
-
-        return {
-          ...product,
-          stock: Math.max(
-            0,
-            Number(product.stock) - soldItem.quantity
-          ),
-        };
-      })
-    );
-
-    const saleTotal = Number(data.total);
-
-    setCart([]);
-    setSearch("");
-    scannerBufferRef.current = "";
-
-    setMessage(
-      `Venta #${data.sale_number} registrada por $${saleTotal.toLocaleString(
-        "es-CO"
-      )}.`
-    );
-
-    setSaving(false);
-
-    focusScanner();
-  }
 
   return (
     <div className="flex h-full min-h-[calc(100vh-80px)] flex-col gap-4">
@@ -501,11 +724,12 @@ export default function VentasPage() {
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 onKeyDown={(event) => {
-                  handleScannerKeyDown(event);
-
                   if (event.key === "Enter") {
                     handleManualSearchKeyDown(event);
+                    return;
                   }
+
+                  handleScannerKeyDown(event);
                 }}
                 placeholder="Escanea un código de barras o busca un producto..."
                 className="h-12 w-full rounded-lg border bg-background px-4 pr-12 text-base outline-none transition focus:ring-2 focus:ring-primary"
@@ -607,6 +831,100 @@ export default function VentasPage() {
               </button>
             )}
           </div>
+
+          {/* INFORMACIÓN DE CUENTA */}
+
+          {paymentMode === "account" && (
+            <div className="border-b bg-muted/20 p-4">
+              {selectedMember ? (
+                <div className="flex items-center justify-between gap-3 rounded-xl border bg-background p-3">
+                  <div className="min-w-0">
+                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Venta a cuenta
+                    </div>
+
+                    <div className="truncate font-bold">
+                      👤 {selectedMember.name}
+                    </div>
+
+                    {selectedMember.phone && (
+                      <div className="text-xs text-muted-foreground">
+                        {selectedMember.phone}
+                      </div>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedMember(null);
+                      setMemberSearch("");
+
+                      window.setTimeout(() => {
+                        memberSearchRef.current?.focus();
+                      }, 0);
+                    }}
+                    disabled={saving}
+                    className="shrink-0 rounded-lg border px-3 py-2 text-xs font-semibold hover:bg-muted"
+                  >
+                    Cambiar
+                  </button>
+                </div>
+              ) : (
+                <div className="rounded-xl border bg-background p-3">
+                  <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Seleccionar miembro
+                  </div>
+
+                  <input
+                    ref={memberSearchRef}
+                    type="text"
+                    value={memberSearch}
+                    onChange={(event) =>
+                      setMemberSearch(event.target.value)
+                    }
+                    placeholder="Nombre o teléfono..."
+                    autoComplete="off"
+                    disabled={loadingMembers || saving}
+                    className="h-11 w-full rounded-lg border bg-background px-3 outline-none focus:ring-2 focus:ring-primary"
+                  />
+
+                  <div className="mt-2 max-h-48 overflow-y-auto">
+                    {loadingMembers ? (
+                      <div className="py-4 text-center text-sm text-muted-foreground">
+                        Cargando miembros...
+                      </div>
+                    ) : filteredMembers.length === 0 ? (
+                      <div className="py-4 text-center text-sm text-muted-foreground">
+                        No encontramos miembros.
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        {filteredMembers.map((member) => (
+                          <button
+                            key={member.id}
+                            type="button"
+                            onClick={() => selectMember(member)}
+                            className="flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left hover:bg-muted"
+                          >
+                            <span className="font-medium">
+                              {member.name}
+                            </span>
+
+                            {member.phone && (
+                              <span className="ml-3 text-xs text-muted-foreground">
+                                {member.phone}
+                              </span>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
             {cart.length === 0 ? (
@@ -720,13 +1038,15 @@ export default function VentasPage() {
               </div>
             </div>
 
-            <div className="mb-4 grid grid-cols-2 gap-3">
+            {/* MÉTODOS DE PAGO */}
+
+            <div className="mb-4 grid grid-cols-3 gap-2">
               <button
                 type="button"
-                onClick={() => setPaymentMethod("cash")}
+                onClick={selectCash}
                 disabled={saving}
-                className={`flex min-h-[95px] flex-col items-center justify-center rounded-xl border-2 px-3 py-4 text-base font-bold transition ${
-                  paymentMethod === "cash"
+                className={`flex min-h-[90px] flex-col items-center justify-center rounded-xl border-2 px-2 py-3 text-sm font-bold transition ${
+                  paymentMode === "cash"
                     ? "border-primary bg-primary text-primary-foreground shadow-md"
                     : "border-border bg-background hover:border-primary/50 hover:bg-muted"
                 }`}
@@ -737,10 +1057,10 @@ export default function VentasPage() {
 
               <button
                 type="button"
-                onClick={() => setPaymentMethod("nequi")}
+                onClick={selectNequi}
                 disabled={saving}
-                className={`flex min-h-[95px] flex-col items-center justify-center rounded-xl border-2 px-3 py-4 text-base font-bold transition ${
-                  paymentMethod === "nequi"
+                className={`flex min-h-[90px] flex-col items-center justify-center rounded-xl border-2 px-2 py-3 text-sm font-bold transition ${
+                  paymentMode === "nequi"
                     ? "border-primary bg-primary text-primary-foreground shadow-md"
                     : "border-border bg-background hover:border-primary/50 hover:bg-muted"
                 }`}
@@ -748,18 +1068,53 @@ export default function VentasPage() {
                 <span className="text-3xl">📱</span>
                 <span className="mt-1">NEQUI</span>
               </button>
+
+              <button
+                type="button"
+                onClick={selectAccountMode}
+                disabled={saving}
+                className={`flex min-h-[90px] flex-col items-center justify-center rounded-xl border-2 px-2 py-3 text-sm font-bold transition ${
+                  paymentMode === "account"
+                    ? "border-primary bg-primary text-primary-foreground shadow-md"
+                    : "border-border bg-background hover:border-primary/50 hover:bg-muted"
+                }`}
+              >
+                <span className="text-3xl">👤</span>
+                <span className="mt-1">A CUENTA</span>
+              </button>
             </div>
+
+            {/* COBRAR */}
 
             <button
               type="button"
               onClick={completeSale}
-              disabled={cart.length === 0 || saving}
+              disabled={
+                cart.length === 0 ||
+                saving ||
+                (paymentMode === "account" && !selectedMember)
+              }
               className="h-16 w-full rounded-xl bg-primary px-4 text-xl font-black text-primary-foreground shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {saving
+              {saving || openingAccount
                 ? "PROCESANDO..."
-                : `COBRAR $${total.toLocaleString("es-CO")}`}
+                : paymentMode === "account"
+                  ? `COBRAR A CUENTA $${total.toLocaleString(
+                      "es-CO"
+                    )}`
+                  : `COBRAR $${total.toLocaleString("es-CO")}`}
             </button>
+
+            {paymentMode === "account" && !selectedMember && (
+              <button
+                type="button"
+                onClick={cancelAccountMode}
+                disabled={saving}
+                className="mt-2 h-10 w-full rounded-lg text-sm font-semibold text-muted-foreground hover:bg-muted"
+              >
+                Cancelar cuenta
+              </button>
+            )}
           </div>
         </div>
       </div>
