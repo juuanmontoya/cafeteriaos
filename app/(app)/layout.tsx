@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 
 const navigation = [
@@ -55,17 +56,37 @@ export default async function AppLayout({
     data: { user },
   } = await supabase.auth.getUser();
 
-  let profile = null;
-
-  if (user) {
-    const { data } = await supabase
-      .from("profiles")
-      .select("name, role")
-      .eq("id", user.id)
-      .single();
-
-    profile = data;
+  if (!user) {
+    redirect("/login");
   }
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("name, role, active")
+    .eq("id", user.id)
+    .single();
+
+  /*
+   * Si el usuario no tiene perfil o está inactivo,
+   * no puede utilizar CafeteríaOS.
+   */
+  if (!profile || !profile.active) {
+    await supabase.auth.signOut();
+    redirect("/login?error=inactive");
+  }
+
+  const isSupervisor = profile.role === "supervisor";
+
+  const visibleNavigation = isSupervisor
+    ? [
+        ...navigation,
+        {
+          label: "Usuarios",
+          href: "/usuarios",
+          icon: "👤",
+        },
+      ]
+    : navigation;
 
   return (
     <div className="min-h-screen bg-muted/40">
@@ -75,7 +96,10 @@ export default async function AppLayout({
             <span className="text-2xl">☕</span>
 
             <div>
-              <p className="font-bold leading-none">CafeteríaOS</p>
+              <p className="font-bold leading-none">
+                CafeteríaOS
+              </p>
+
               <p className="mt-1 text-xs text-muted-foreground">
                 Administración
               </p>
@@ -84,13 +108,16 @@ export default async function AppLayout({
         </div>
 
         <nav className="flex-1 space-y-1 overflow-y-auto p-4">
-          {navigation.map((item) => (
+          {visibleNavigation.map((item) => (
             <Link
               key={item.href}
               href={item.href}
               className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors hover:bg-muted"
             >
-              <span className="text-lg">{item.icon}</span>
+              <span className="text-lg">
+                {item.icon}
+              </span>
+
               <span>{item.label}</span>
             </Link>
           ))}
@@ -99,11 +126,11 @@ export default async function AppLayout({
         <div className="border-t p-4">
           <div className="rounded-lg bg-muted/50 p-3">
             <p className="truncate text-sm font-medium">
-              {profile?.name ?? "Usuario"}
+              {profile.name}
             </p>
 
             <p className="mt-1 text-xs capitalize text-muted-foreground">
-              {profile?.role ?? "usuario"}
+              {profile.role}
             </p>
           </div>
         </div>
@@ -124,16 +151,16 @@ export default async function AppLayout({
           <div className="flex items-center gap-3">
             <div className="hidden text-right sm:block">
               <p className="text-sm font-medium">
-                {profile?.name ?? "Usuario"}
+                {profile.name}
               </p>
 
               <p className="text-xs capitalize text-muted-foreground">
-                {profile?.role ?? "usuario"}
+                {profile.role}
               </p>
             </div>
 
             <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-sm font-bold text-primary-foreground">
-              {profile?.name?.charAt(0).toUpperCase() ?? "U"}
+              {profile.name.charAt(0).toUpperCase()}
             </div>
           </div>
         </header>

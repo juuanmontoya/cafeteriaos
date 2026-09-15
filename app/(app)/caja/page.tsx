@@ -36,6 +36,8 @@ type PaymentRow = {
 
 const supabase = createClient();
 
+const COLOMBIA_TIME_ZONE = "America/Bogota";
+
 function formatCurrency(value: number) {
   return new Intl.NumberFormat("es-CO", {
     style: "currency",
@@ -48,13 +50,15 @@ function formatDateTime(value: string) {
   return new Intl.DateTimeFormat("es-CO", {
     dateStyle: "short",
     timeStyle: "short",
+    timeZone: COLOMBIA_TIME_ZONE,
   }).format(new Date(value));
 }
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("es-CO", {
     dateStyle: "long",
-  }).format(new Date(`${value}T12:00:00`));
+    timeZone: COLOMBIA_TIME_ZONE,
+  }).format(new Date(`${value}T12:00:00-05:00`));
 }
 
 export default function CajaPage() {
@@ -110,26 +114,29 @@ export default function CajaPage() {
 
       setRegister(currentRegister);
 
-      const [{ data: movementsData, error: movementsError }, { data: paymentsData, error: paymentsError }, { data: accountPaymentsData, error: accountPaymentsError }] =
-        await Promise.all([
-          supabase
-            .from("cash_movements")
-            .select("id,type,amount,concept,created_at")
-            .eq("cash_register_id", currentRegister.id)
-            .order("created_at", { ascending: false }),
+      const [
+        { data: movementsData, error: movementsError },
+        { data: paymentsData, error: paymentsError },
+        { data: accountPaymentsData, error: accountPaymentsError },
+      ] = await Promise.all([
+        supabase
+          .from("cash_movements")
+          .select("id,type,amount,concept,created_at")
+          .eq("cash_register_id", currentRegister.id)
+          .order("created_at", { ascending: false }),
 
-          supabase
-            .from("payments")
-            .select("amount,method,created_at")
-            .gte("created_at", currentRegister.opened_at)
-            .order("created_at", { ascending: false }),
+        supabase
+          .from("payments")
+          .select("amount,method,created_at")
+          .gte("created_at", currentRegister.opened_at)
+          .order("created_at", { ascending: false }),
 
-          supabase
-            .from("account_payments")
-            .select("amount,method,created_at")
-            .gte("created_at", currentRegister.opened_at)
-            .order("created_at", { ascending: false }),
-        ]);
+        supabase
+          .from("account_payments")
+          .select("amount,method,created_at")
+          .gte("created_at", currentRegister.opened_at)
+          .order("created_at", { ascending: false }),
+      ]);
 
       if (movementsError) throw movementsError;
       if (paymentsError) throw paymentsError;
@@ -235,7 +242,7 @@ export default function CajaPage() {
       setOpeningAmount("");
       await loadCaja();
     } catch (error: any) {
-      console.error(error);
+      console.error("ERROR AL ABRIR CAJA:", error);
       alert(error?.message ?? "No se pudo abrir la caja.");
     } finally {
       setSaving(false);
@@ -420,13 +427,14 @@ export default function CajaPage() {
           <p className="mt-1 text-sm text-muted-foreground">
             Caja abierta · {formatDate(register.date)}
           </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Abierta: {formatDateTime(register.opened_at)}
+          </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          <span className="inline-flex items-center rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium text-emerald-700">
-            ● Abierta
-          </span>
-        </div>
+        <span className="inline-flex items-center rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium text-emerald-700">
+          ● Abierta
+        </span>
       </div>
 
       {/* RESUMEN */}
@@ -565,6 +573,7 @@ export default function CajaPage() {
                         <p className="truncate text-sm font-medium">
                           {movement.concept || "Movimiento de caja"}
                         </p>
+
                         <p className="mt-1 text-xs text-muted-foreground">
                           {formatDateTime(movement.created_at)}
                         </p>
@@ -730,6 +739,7 @@ export default function CajaPage() {
                 {differencePreview !== null && (
                   <div className="mt-3 flex justify-between border-t pt-3 text-sm">
                     <span>Diferencia</span>
+
                     <strong
                       className={
                         differencePreview === 0
@@ -781,6 +791,10 @@ export default function CajaPage() {
       {lastClosure && !register && (
         <div className="rounded-2xl border bg-card p-6 shadow-sm">
           <h2 className="text-lg font-semibold">Caja cerrada</h2>
+
+          <p className="mt-1 text-xs text-muted-foreground">
+            Cerrada: {formatDateTime(lastClosure.created_at)}
+          </p>
 
           <div className="mt-4 grid gap-4 sm:grid-cols-3">
             <div>
