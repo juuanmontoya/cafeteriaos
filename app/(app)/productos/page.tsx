@@ -201,6 +201,11 @@ export default function ProductosPage() {
       return;
     }
 
+    if (!editingProduct && Number(stock) < 0) {
+      setFormError("El stock inicial no puede ser negativo.");
+      return;
+    }
+
     setSaving(true);
 
     const supabase = createClient();
@@ -220,11 +225,30 @@ export default function ProductosPage() {
     let result;
 
     if (editingProduct) {
-      result = await supabase
-        .from("products")
-        .update(productData)
-        .eq("id", editingProduct.id);
+      /*
+       * La edición pasa por una función SECURITY DEFINER.
+       *
+       * Importante:
+       * stock NO forma parte de esta operación.
+       */
+      result = await supabase.rpc("update_product", {
+        p_product_id: editingProduct.id,
+        p_name: productData.name,
+        p_barcode: productData.barcode,
+        p_category_id: productData.category_id,
+        p_supplier_id: null,
+        p_sale_price: productData.sale_price,
+        p_cost_price: productData.cost_price,
+        p_min_stock: productData.min_stock,
+        p_track_inventory: productData.track_inventory,
+        p_prepared: productData.prepared,
+        p_active: productData.active,
+      });
     } else {
+      /*
+       * Al crear un producto sí permitimos definir
+       * su stock inicial.
+       */
       result = await supabase
         .from("products")
         .insert({
