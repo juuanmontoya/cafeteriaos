@@ -27,13 +27,14 @@ type Member = {
 
 type PaymentMode = "cash" | "nequi" | "account";
 
+const COLOMBIA_TIME_ZONE = "America/Bogota";
+
 export default function VentasPage() {
   const supabase = createClient();
 
   const searchRef = useRef<HTMLInputElement>(null);
   const memberSearchRef = useRef<HTMLInputElement>(null);
 
-  // Scanner
   const scannerBufferRef = useRef("");
   const scannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastKeyTimeRef = useRef(0);
@@ -54,18 +55,18 @@ export default function VentasPage() {
   const [loading, setLoading] = useState(true);
   const [loadingMembers, setLoadingMembers] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [openingAccount, setOpeningAccount] = useState(false);
 
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
   async function loadProducts() {
     setLoading(true);
+    setError("");
 
     const { data, error } = await supabase
       .from("products")
       .select(
-        "id, name, barcode, sale_price, stock, track_inventory, active"
+        "id, name, barcode, sale_price, stock, track_inventory, active",
       )
       .eq("active", true)
       .order("name");
@@ -141,6 +142,21 @@ export default function VentasPage() {
     return map;
   }, [products]);
 
+  const filteredProducts = useMemo(() => {
+    const query = search.trim().toLowerCase();
+
+    if (!query) {
+      return products;
+    }
+
+    return products.filter((product) => {
+      return (
+        product.name.toLowerCase().includes(query) ||
+        (product.barcode ?? "").toLowerCase().includes(query)
+      );
+    });
+  }, [products, search]);
+
   const filteredMembers = useMemo(() => {
     const query = memberSearch.trim().toLowerCase();
 
@@ -158,6 +174,15 @@ export default function VentasPage() {
       .slice(0, 20);
   }, [members, memberSearch]);
 
+  const total = useMemo(() => {
+    return cart.reduce(
+      (sum, item) =>
+        sum +
+        Number(item.product.sale_price) * item.quantity,
+      0,
+    );
+  }, [cart]);
+
   function focusScanner() {
     window.setTimeout(() => {
       searchRef.current?.focus();
@@ -167,7 +192,9 @@ export default function VentasPage() {
   function findProduct(value: string) {
     const cleanValue = value.trim().toLowerCase();
 
-    if (!cleanValue) return null;
+    if (!cleanValue) {
+      return null;
+    }
 
     const barcodeMatch = barcodeMap.get(cleanValue);
 
@@ -191,7 +218,7 @@ export default function VentasPage() {
 
     setCart((currentCart) => {
       const existing = currentCart.find(
-        (item) => item.product.id === product.id
+        (item) => item.product.id === product.id,
       );
 
       if (!existing) {
@@ -211,7 +238,7 @@ export default function VentasPage() {
         newQuantity > Number(product.stock)
       ) {
         setError(
-          `No puedes agregar más "${product.name}". Stock disponible: ${product.stock}.`
+          `No puedes agregar más "${product.name}". Stock disponible: ${product.stock}.`,
         );
 
         return currentCart;
@@ -223,7 +250,7 @@ export default function VentasPage() {
               ...item,
               quantity: newQuantity,
             }
-          : item
+          : item,
       );
     });
 
@@ -236,7 +263,9 @@ export default function VentasPage() {
   function processScannedCode(code: string) {
     const cleanCode = code.trim();
 
-    if (!cleanCode) return;
+    if (!cleanCode) {
+      return;
+    }
 
     const product = findProduct(cleanCode);
 
@@ -245,14 +274,18 @@ export default function VentasPage() {
       return;
     }
 
-    setError(`No encontramos ningún producto para "${cleanCode}".`);
+    setError(
+      `No encontramos ningún producto para "${cleanCode}".`,
+    );
+
     setSearch("");
     scannerBufferRef.current = "";
+
     focusScanner();
   }
 
   function handleScannerKeyDown(
-    event: React.KeyboardEvent<HTMLInputElement>
+    event: React.KeyboardEvent<HTMLInputElement>,
   ) {
     if (event.key === "Enter") {
       event.preventDefault();
@@ -288,30 +321,34 @@ export default function VentasPage() {
     scannerTimerRef.current = setTimeout(() => {
       const code = scannerBufferRef.current.trim();
 
-      if (!code) return;
-
       scannerBufferRef.current = "";
 
-      if (code.length >= 6) {
-        const product = findProduct(code);
+      if (!code || code.length < 6) {
+        return;
+      }
 
-        if (product) {
-          addToCart(product);
-        }
+      const product = findProduct(code);
+
+      if (product) {
+        addToCart(product);
       }
     }, 60);
   }
 
   function handleManualSearchKeyDown(
-    event: React.KeyboardEvent<HTMLInputElement>
+    event: React.KeyboardEvent<HTMLInputElement>,
   ) {
-    if (event.key !== "Enter") return;
+    if (event.key !== "Enter") {
+      return;
+    }
 
     event.preventDefault();
 
     const value = search.trim();
 
-    if (!value) return;
+    if (!value) {
+      return;
+    }
 
     const exactProduct = findProduct(value);
 
@@ -322,27 +359,36 @@ export default function VentasPage() {
 
     const query = value.toLowerCase();
 
-    const filtered = products.filter((product) => {
+    const matchingProducts = products.filter((product) => {
       return (
         product.name.toLowerCase().includes(query) ||
         (product.barcode ?? "").toLowerCase().includes(query)
       );
     });
 
-    if (filtered.length === 1) {
-      addToCart(filtered[0]);
+    if (matchingProducts.length === 1) {
+      addToCart(matchingProducts[0]);
       return;
     }
 
-    if (filtered.length === 0) {
-      setError(`No encontramos ningún producto para "${value}".`);
+    if (matchingProducts.length === 0) {
+      setError(
+        `No encontramos ningún producto para "${value}".`,
+      );
     }
   }
 
-  function updateQuantity(productId: string, quantity: number) {
-    const product = products.find((item) => item.id === productId);
+  function updateQuantity(
+    productId: string,
+    quantity: number,
+  ) {
+    const product = products.find(
+      (item) => item.id === productId,
+    );
 
-    if (!product) return;
+    if (!product) {
+      return;
+    }
 
     if (quantity <= 0) {
       removeFromCart(productId);
@@ -354,7 +400,7 @@ export default function VentasPage() {
       quantity > Number(product.stock)
     ) {
       setError(
-        `Stock insuficiente para "${product.name}". Disponible: ${product.stock}.`
+        `Stock insuficiente para "${product.name}". Disponible: ${product.stock}.`,
       );
       return;
     }
@@ -368,14 +414,16 @@ export default function VentasPage() {
               ...item,
               quantity,
             }
-          : item
-      )
+          : item,
+      ),
     );
   }
 
   function removeFromCart(productId: string) {
     setCart((currentCart) =>
-      currentCart.filter((item) => item.product.id !== productId)
+      currentCart.filter(
+        (item) => item.product.id !== productId,
+      ),
     );
 
     focusScanner();
@@ -386,6 +434,7 @@ export default function VentasPage() {
     setError("");
     setMessage("");
     setSearch("");
+
     scannerBufferRef.current = "";
 
     setPaymentMode("cash");
@@ -401,6 +450,7 @@ export default function VentasPage() {
     setMemberSearch("");
     setError("");
     setMessage("");
+
     focusScanner();
   }
 
@@ -410,6 +460,7 @@ export default function VentasPage() {
     setMemberSearch("");
     setError("");
     setMessage("");
+
     focusScanner();
   }
 
@@ -434,6 +485,7 @@ export default function VentasPage() {
     setMemberSearch("");
     setError("");
     setMessage("");
+
     focusScanner();
   }
 
@@ -447,26 +499,24 @@ export default function VentasPage() {
     focusScanner();
   }
 
+  function getTodayInBogota() {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: COLOMBIA_TIME_ZONE,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+  }
+
   async function openAccountForMember(): Promise<string | null> {
     if (!selectedMember) {
       setError("Selecciona un miembro.");
       return null;
     }
 
-    setOpeningAccount(true);
     setError("");
 
-    /*
-     * La fecha se utiliza únicamente para identificar
-     * cuándo se abrió la cuenta. Puede ser cualquier día.
-     */
-    const now = new Date();
-
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, "0");
-    const day = String(now.getDate()).padStart(2, "0");
-
-    const meetingDate = `${year}-${month}-${day}`;
+    const meetingDate = getTodayInBogota();
 
     const { data, error } = await supabase.rpc(
       "open_member_account",
@@ -474,10 +524,8 @@ export default function VentasPage() {
         p_member_id: selectedMember.id,
         p_meeting_date: meetingDate,
         p_supervisor_override: false,
-      }
+      },
     );
-
-    setOpeningAccount(false);
 
     if (error) {
       setError(error.message);
@@ -499,45 +547,33 @@ export default function VentasPage() {
     }
 
     /*
-     * Primero buscamos una cuenta abierta.
+     * IMPORTANTE:
+     * Solo buscamos la cuenta abierta de HOY.
      *
-     * Si existe, usamos esa cuenta.
-     * Si no existe, abrimos una nueva.
-     *
-     * No importa si es lunes, martes, miércoles,
-     * jueves o viernes.
+     * Así una cuenta del miércoles no recibe
+     * accidentalmente las compras del viernes.
      */
-    const { data: existingAccounts, error: accountError } =
-      await supabase
-        .from("accounts")
-        .select("id, meeting_date, status")
-        .eq("member_id", selectedMember.id)
-        .eq("status", "open")
-        .order("created_at", {
-          ascending: false,
-        })
-        .limit(1);
+    const today = getTodayInBogota();
 
-    if (accountError) {
+    const { data, error } = await supabase
+      .from("accounts")
+      .select("id, meeting_date, status")
+      .eq("member_id", selectedMember.id)
+      .eq("meeting_date", today)
+      .eq("status", "open")
+      .limit(1);
+
+    if (error) {
       setError(
-        `No se pudo consultar la cuenta: ${accountError.message}`
+        `No se pudo consultar la cuenta: ${error.message}`,
       );
       return null;
     }
 
-    const existingAccount = existingAccounts?.[0];
-
-    if (existingAccount) {
-      return existingAccount.id;
+    if (data?.[0]?.id) {
+      return data[0].id;
     }
 
-    /*
-     * No tenía cuenta abierta:
-     * intentamos crear una nueva.
-     *
-     * La función de Supabase controla las reglas
-     * de máximo de jornadas pendientes y permisos.
-     */
     return await openAccountForMember();
   }
 
@@ -551,8 +587,13 @@ export default function VentasPage() {
       return;
     }
 
-    if (paymentMode === "account" && !selectedMember) {
-      setError("Selecciona un miembro para cobrar a cuenta.");
+    if (
+      paymentMode === "account" &&
+      !selectedMember
+    ) {
+      setError(
+        "Selecciona un miembro para cobrar a cuenta.",
+      );
       return;
     }
 
@@ -560,10 +601,6 @@ export default function VentasPage() {
 
     let accountId: string | null = null;
 
-    /*
-     * Solo buscamos/creamos cuenta cuando realmente
-     * estamos cobrando a cuenta.
-     */
     if (paymentMode === "account") {
       accountId = await findOrCreateAccount();
 
@@ -579,22 +616,25 @@ export default function VentasPage() {
       quantity: item.quantity,
     }));
 
-    const { data, error } = await supabase.rpc("create_sale", {
-      p_items: items,
-      p_payment_method:
-        paymentMode === "account"
-          ? null
-          : paymentMode,
-      p_member_id:
-        paymentMode === "account"
-          ? selectedMember?.id ?? null
-          : null,
-      p_account_id: accountId,
-    });
+    const { data, error } = await supabase.rpc(
+      "create_sale",
+      {
+        p_items: items,
+        p_payment_method:
+          paymentMode === "account"
+            ? null
+            : paymentMode,
+        p_member_id:
+          paymentMode === "account"
+            ? selectedMember?.id ?? null
+            : null,
+        p_account_id: accountId,
+      },
+    );
 
     if (error) {
       setError(
-        `No se pudo completar la venta: ${error.message}`
+        `No se pudo completar la venta: ${error.message}`,
       );
       setSaving(false);
       focusScanner();
@@ -602,13 +642,13 @@ export default function VentasPage() {
     }
 
     /*
-     * Actualizamos el stock local inmediatamente.
-     * No necesitamos volver a consultar todos los productos.
+     * Actualizamos el stock local para que la pantalla
+     * refleje inmediatamente la venta.
      */
     setProducts((currentProducts) =>
       currentProducts.map((product) => {
         const soldItem = cart.find(
-          (item) => item.product.id === product.id
+          (item) => item.product.id === product.id,
         );
 
         if (!soldItem || !product.track_inventory) {
@@ -619,10 +659,10 @@ export default function VentasPage() {
           ...product,
           stock: Math.max(
             0,
-            Number(product.stock) - soldItem.quantity
+            Number(product.stock) - soldItem.quantity,
           ),
         };
-      })
+      }),
     );
 
     const saleTotal = Number(data.total);
@@ -631,26 +671,31 @@ export default function VentasPage() {
 
     setCart([]);
     setSearch("");
+
     scannerBufferRef.current = "";
 
     if (paymentMode === "account") {
       setMessage(
         `Venta #${saleNumber} agregada a la cuenta de ${memberName} por $${saleTotal.toLocaleString(
-          "es-CO"
-        )}.`
+          "es-CO",
+        )}.`,
       );
     } else {
+      const paymentLabel =
+        paymentMode === "cash"
+          ? "Efectivo"
+          : "Nequi";
+
       setMessage(
-        `Venta #${saleNumber} registrada por $${saleTotal.toLocaleString(
-          "es-CO"
-        )}.`
+        `Venta #${saleNumber} registrada en ${paymentLabel} por $${saleTotal.toLocaleString(
+          "es-CO",
+        )}.`,
       );
     }
 
     /*
-     * Una venta nueva siempre empieza en pago normal.
-     * Así evitamos que accidentalmente la siguiente venta
-     * termine cargada al mismo miembro.
+     * La siguiente venta comienza siempre como
+     * venta normal en efectivo.
      */
     setPaymentMode("cash");
     setSelectedMember(null);
@@ -660,27 +705,6 @@ export default function VentasPage() {
 
     focusScanner();
   }
-
-  const filteredProducts = useMemo(() => {
-    const query = search.trim().toLowerCase();
-
-    if (!query) return products;
-
-    return products.filter((product) => {
-      return (
-        product.name.toLowerCase().includes(query) ||
-        (product.barcode ?? "").toLowerCase().includes(query)
-      );
-    });
-  }, [products, search]);
-
-  const total = useMemo(() => {
-    return cart.reduce(
-      (sum, item) =>
-        sum + Number(item.product.sale_price) * item.quantity,
-      0
-    );
-  }, [cart]);
 
   return (
     <div className="flex h-full min-h-[calc(100vh-80px)] flex-col gap-4">
@@ -692,7 +716,8 @@ export default function VentasPage() {
         </h1>
 
         <p className="text-sm text-muted-foreground">
-          Registra ventas, escanea productos y cobra rápidamente.
+          Registra ventas, escanea productos y cobra
+          rápidamente.
         </p>
       </div>
 
@@ -722,7 +747,9 @@ export default function VentasPage() {
                 ref={searchRef}
                 type="text"
                 value={search}
-                onChange={(event) => setSearch(event.target.value)}
+                onChange={(event) =>
+                  setSearch(event.target.value)
+                }
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
                     handleManualSearchKeyDown(event);
@@ -744,7 +771,8 @@ export default function VentasPage() {
             </div>
 
             <div className="mt-2 text-xs text-muted-foreground">
-              Escanea directamente. No necesitas presionar Enter.
+              Escanea directamente. También puedes buscar
+              por nombre.
             </div>
           </div>
 
@@ -761,14 +789,17 @@ export default function VentasPage() {
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
                 {filteredProducts.map((product) => {
                   const unavailable =
-                    product.track_inventory && product.stock <= 0;
+                    product.track_inventory &&
+                    product.stock <= 0;
 
                   return (
                     <button
                       key={product.id}
                       type="button"
                       disabled={unavailable || saving}
-                      onClick={() => addToCart(product)}
+                      onClick={() =>
+                        addToCart(product)
+                      }
                       className="flex min-h-[125px] flex-col justify-between rounded-xl border bg-background p-4 text-left transition hover:border-primary hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <div>
@@ -787,7 +818,7 @@ export default function VentasPage() {
                         <div className="text-lg font-bold">
                           $
                           {Number(
-                            product.sale_price
+                            product.sale_price,
                           ).toLocaleString("es-CO")}
                         </div>
 
@@ -812,7 +843,9 @@ export default function VentasPage() {
         <div className="flex min-h-0 flex-col rounded-xl border bg-card">
           <div className="flex items-center justify-between border-b p-4">
             <div>
-              <h2 className="font-semibold">Venta actual</h2>
+              <h2 className="font-semibold">
+                Venta actual
+              </h2>
 
               <p className="text-xs text-muted-foreground">
                 {cart.length} producto
@@ -832,7 +865,7 @@ export default function VentasPage() {
             )}
           </div>
 
-          {/* INFORMACIÓN DE CUENTA */}
+          {/* CUENTA */}
 
           {paymentMode === "account" && (
             <div className="border-b bg-muted/20 p-4">
@@ -881,11 +914,15 @@ export default function VentasPage() {
                     type="text"
                     value={memberSearch}
                     onChange={(event) =>
-                      setMemberSearch(event.target.value)
+                      setMemberSearch(
+                        event.target.value,
+                      )
                     }
                     placeholder="Nombre o teléfono..."
                     autoComplete="off"
-                    disabled={loadingMembers || saving}
+                    disabled={
+                      loadingMembers || saving
+                    }
                     className="h-11 w-full rounded-lg border bg-background px-3 outline-none focus:ring-2 focus:ring-primary"
                   />
 
@@ -900,24 +937,30 @@ export default function VentasPage() {
                       </div>
                     ) : (
                       <div className="space-y-1">
-                        {filteredMembers.map((member) => (
-                          <button
-                            key={member.id}
-                            type="button"
-                            onClick={() => selectMember(member)}
-                            className="flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left hover:bg-muted"
-                          >
-                            <span className="font-medium">
-                              {member.name}
-                            </span>
-
-                            {member.phone && (
-                              <span className="ml-3 text-xs text-muted-foreground">
-                                {member.phone}
+                        {filteredMembers.map(
+                          (member) => (
+                            <button
+                              key={member.id}
+                              type="button"
+                              onClick={() =>
+                                selectMember(
+                                  member,
+                                )
+                              }
+                              className="flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left hover:bg-muted"
+                            >
+                              <span className="font-medium">
+                                {member.name}
                               </span>
-                            )}
-                          </button>
-                        ))}
+
+                              {member.phone && (
+                                <span className="ml-3 text-xs text-muted-foreground">
+                                  {member.phone}
+                                </span>
+                              )}
+                            </button>
+                          ),
+                        )}
                       </div>
                     )}
                   </div>
@@ -937,7 +980,8 @@ export default function VentasPage() {
                   </div>
 
                   <div className="mt-1 text-sm text-muted-foreground">
-                    Escanea un producto o selecciónalo de la lista.
+                    Escanea un producto o selecciónalo
+                    de la lista.
                   </div>
                 </div>
               </div>
@@ -945,7 +989,9 @@ export default function VentasPage() {
               <div className="space-y-3">
                 {cart.map((item) => {
                   const itemTotal =
-                    Number(item.product.sale_price) * item.quantity;
+                    Number(
+                      item.product.sale_price,
+                    ) * item.quantity;
 
                   return (
                     <div
@@ -961,8 +1007,10 @@ export default function VentasPage() {
                           <div className="text-xs text-muted-foreground">
                             $
                             {Number(
-                              item.product.sale_price
-                            ).toLocaleString("es-CO")}{" "}
+                              item.product.sale_price,
+                            ).toLocaleString(
+                              "es-CO",
+                            )}{" "}
                             c/u
                           </div>
                         </div>
@@ -970,7 +1018,9 @@ export default function VentasPage() {
                         <button
                           type="button"
                           onClick={() =>
-                            removeFromCart(item.product.id)
+                            removeFromCart(
+                              item.product.id,
+                            )
                           }
                           disabled={saving}
                           className="text-sm text-red-600 hover:underline"
@@ -986,7 +1036,7 @@ export default function VentasPage() {
                             onClick={() =>
                               updateQuantity(
                                 item.product.id,
-                                item.quantity - 1
+                                item.quantity - 1,
                               )
                             }
                             disabled={saving}
@@ -1004,7 +1054,7 @@ export default function VentasPage() {
                             onClick={() =>
                               updateQuantity(
                                 item.product.id,
-                                item.quantity + 1
+                                item.quantity + 1,
                               )
                             }
                             disabled={saving}
@@ -1015,7 +1065,10 @@ export default function VentasPage() {
                         </div>
 
                         <div className="font-semibold">
-                          ${itemTotal.toLocaleString("es-CO")}
+                          $
+                          {itemTotal.toLocaleString(
+                            "es-CO",
+                          )}
                         </div>
                       </div>
                     </div>
@@ -1038,7 +1091,7 @@ export default function VentasPage() {
               </div>
             </div>
 
-            {/* MÉTODOS DE PAGO */}
+            {/* MÉTODOS */}
 
             <div className="mb-4 grid grid-cols-3 gap-2">
               <button
@@ -1051,8 +1104,12 @@ export default function VentasPage() {
                     : "border-border bg-background hover:border-primary/50 hover:bg-muted"
                 }`}
               >
-                <span className="text-3xl">💵</span>
-                <span className="mt-1">EFECTIVO</span>
+                <span className="text-3xl">
+                  💵
+                </span>
+                <span className="mt-1">
+                  EFECTIVO
+                </span>
               </button>
 
               <button
@@ -1065,8 +1122,12 @@ export default function VentasPage() {
                     : "border-border bg-background hover:border-primary/50 hover:bg-muted"
                 }`}
               >
-                <span className="text-3xl">📱</span>
-                <span className="mt-1">NEQUI</span>
+                <span className="text-3xl">
+                  📱
+                </span>
+                <span className="mt-1">
+                  NEQUI
+                </span>
               </button>
 
               <button
@@ -1079,8 +1140,12 @@ export default function VentasPage() {
                     : "border-border bg-background hover:border-primary/50 hover:bg-muted"
                 }`}
               >
-                <span className="text-3xl">👤</span>
-                <span className="mt-1">A CUENTA</span>
+                <span className="text-3xl">
+                  👤
+                </span>
+                <span className="mt-1">
+                  A CUENTA
+                </span>
               </button>
             </div>
 
@@ -1092,29 +1157,33 @@ export default function VentasPage() {
               disabled={
                 cart.length === 0 ||
                 saving ||
-                (paymentMode === "account" && !selectedMember)
+                (paymentMode === "account" &&
+                  !selectedMember)
               }
               className="h-16 w-full rounded-xl bg-primary px-4 text-xl font-black text-primary-foreground shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {saving || openingAccount
+              {saving
                 ? "PROCESANDO..."
                 : paymentMode === "account"
                   ? `COBRAR A CUENTA $${total.toLocaleString(
-                      "es-CO"
+                      "es-CO",
                     )}`
-                  : `COBRAR $${total.toLocaleString("es-CO")}`}
+                  : `COBRAR $${total.toLocaleString(
+                      "es-CO",
+                    )}`}
             </button>
 
-            {paymentMode === "account" && !selectedMember && (
-              <button
-                type="button"
-                onClick={cancelAccountMode}
-                disabled={saving}
-                className="mt-2 h-10 w-full rounded-lg text-sm font-semibold text-muted-foreground hover:bg-muted"
-              >
-                Cancelar cuenta
-              </button>
-            )}
+            {paymentMode === "account" &&
+              !selectedMember && (
+                <button
+                  type="button"
+                  onClick={cancelAccountMode}
+                  disabled={saving}
+                  className="mt-2 h-10 w-full rounded-lg text-sm font-semibold text-muted-foreground hover:bg-muted"
+                >
+                  Cancelar cuenta
+                </button>
+              )}
           </div>
         </div>
       </div>
